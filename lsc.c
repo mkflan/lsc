@@ -43,14 +43,20 @@ int main(int argc, char **argv) {
       while ((dir = readdir(dir_stream)) != NULL) {
         char *dir_name = dir->d_name;
 
+        // Don't display the `.` and `..` directories.
         if (!strcmp(dir_name, ".") || !strcmp(dir_name, "..")) {
           continue;
         }
+
+        // Skip dotfiles if the all entries option wasn't specified.
+        if (dir_name[0] == '.' && !all_entries) {
+          continue;
+        }
         
-        printf("%s\n", dir_name);
+        printf("%s  ", dir_name);
       }
     } else if (S_ISREG(statbuf.st_mode)) {
-      
+      // TODO
     }
   }
 }

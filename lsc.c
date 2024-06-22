@@ -4,6 +4,10 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <string.h>
 
 static bool all_entries;
 static bool long_listing;
@@ -13,6 +17,93 @@ static struct option long_options[] =
   {"all", no_argument, NULL, 'a'},
   {NULL, 0, NULL, 0}
 };
+
+// Return a string representing the type and permissions of an entry.
+char *entry_type_and_perms(__mode_t mode) {
+  char *tp = (char *) malloc(11 * sizeof(char));
+
+  // Set the type.
+  switch (mode & S_IFMT) {
+    case S_IFBLK:  tp[0] = 'b'; break;
+    case S_IFCHR:  tp[0] = 'c'; break;
+    case S_IFDIR:  tp[0] = 'd'; break;
+    case S_IFIFO:  tp[0] = 'f'; break;
+    case S_IFLNK:  tp[0] = 'l'; break;
+    case S_IFREG:  tp[0] = '-'; break;
+    case S_IFSOCK: tp[0] = 's'; break;
+  } 
+
+  // Set permissions.
+  tp[1] = (mode & S_IRUSR) ? 'r' : '-';
+  tp[2] = (mode & S_IWUSR) ? 'w' : '-';
+  tp[3] = (mode & S_IXUSR) ? 'x' : '-';
+  tp[4] = (mode & S_IRGRP) ? 'r' : '-';
+  tp[5] = (mode & S_IWGRP) ? 'w' : '-';
+  tp[6] = (mode & S_IXGRP) ? 'x' : '-';
+  tp[7] = (mode & S_IROTH) ? 'r' : '-';
+  tp[8] = (mode & S_IWOTH) ? 'w' : '-';
+  tp[9] = (mode & S_IXOTH) ? 'x' : '-';
+  tp[10] = '\0';
+
+  return tp;
+}
+
+// Handle displaying an individual entry.
+void ls_entry(char *entry_name, struct stat entry_status) {
+  if (!long_listing) {
+    printf("%s  ", entry_name);
+  } else {
+    // TODO: finish handling long listing.
+    char *tp = entry_type_and_perms(entry_status.st_mode);
+
+    // Display symlinks properly.
+    if (S_ISLNK(entry_status.st_mode)) {
+      char link_target_name[1024];
+      ssize_t link_target_name_len;
+
+      if ((link_target_name_len = readlink(entry_name, link_target_name, sizeof(link_target_name))) == -1) {
+        fprintf(stderr, "%s", strerror(errno));
+        exit(EXIT_FAILURE);
+      } else {
+        link_target_name[link_target_name_len] = '\0';
+        printf("%s  %s -> %s\n", tp, entry_name, link_target_name);
+      }
+    } else {
+      printf("%s  %s\n", tp, entry_name);
+    }
+  }
+}
+
+// Handle displaying a directory.
+void ls_dir(char *dir_path) {
+  DIR *dir_stream = opendir(dir_path);
+
+  if (dir_stream == NULL) {
+    fprintf(stderr, "%s", strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+  
+  struct dirent *entry;
+
+  while ((entry = readdir(dir_stream)) != NULL) {
+    char *entry_name = entry->d_name;
+
+    // Don't display the `.` and `..` directories. 
+    if (!strcmp(entry_name, ".") || !strcmp(entry_name, "..")) {
+      continue;
+    }
+
+    // Skip dotfiles if the all entries option wasn't specified.
+    if (entry_name[0] == '.' && !all_entries) {
+      continue;
+    }
+
+    struct stat entry_status;
+
+    lstat(entry_name, &entry_status);
+    ls_entry(entry_name, entry_status);
+  }
+}
 
 int main(int argc, char **argv) {
   int opt;
@@ -30,33 +121,19 @@ int main(int argc, char **argv) {
     }
   }
 
-  // The path to ls.
+  // The directory or file to list.
   char *target_path = (optind == argc - 1) ? argv[optind] : "./";
 
-  struct stat statbuf;
+  struct stat target_status;
 
-  if (stat(target_path, &statbuf) == 0) {
-    if (S_ISDIR(statbuf.st_mode)) {
-      DIR *dir_stream = opendir(target_path);
-      struct dirent *dir;
-
-      while ((dir = readdir(dir_stream)) != NULL) {
-        char *dir_name = dir->d_name;
-
-        // Don't display the `.` and `..` directories.
-        if (!strcmp(dir_name, ".") || !strcmp(dir_name, "..")) {
-          continue;
-        }
-
-        // Skip dotfiles if the all entries option wasn't specified.
-        if (dir_name[0] == '.' && !all_entries) {
-          continue;
-        }
-        
-        printf("%s  ", dir_name);
-      }
-    } else if (S_ISREG(statbuf.st_mode)) {
-      // TODO
+  if (lstat(target_path, &target_status) == 0) {
+    if (S_ISDIR(target_status.st_mode)) {
+      ls_dir(target_path);
+    } else {
+      ls_entry(target_path, target_status);
     }
+  } else {
+    fprintf(stderr, "%s: '%s'", strerror(errno), target_path);
+    exit(EXIT_FAILURE);
   }
 }

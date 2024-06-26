@@ -9,14 +9,37 @@
 #include <errno.h>
 #include <string.h>
 
+// Print all entries in a directory, including dotfiles.
 static bool all_entries;
+
+/* Use a long listing format.
+   FORMAT: total TOTAL_SIZE_IN_BLOCKS
+           entry_perms links_count owner associated_group size_in_bytes last_modified name 
+ */
 static bool long_listing;
+
+// List a directory itself instead of its contents.
+static bool list_directory;
+
+// Recursively list subdirectories.
+static bool recursive;
 
 static struct option long_options[] =
 {
+  {"help", no_argument, NULL, 'h'},
   {"all", no_argument, NULL, 'a'},
+  {"directory", no_argument, NULL, 'd'},
+  {"recursive", no_argument, NULL, 'R'},
   {NULL, 0, NULL, 0}
 };
+
+static char *help_msg = "Usage: lsc [OPTIONS] [FILES]\n\
+List information about the given FILEs, or the current directory if none are specified.\n \
+\n\
+  -a, --all       include all entries in the listing\n\
+  -l              use a long listing format\n\
+  -d, --directory list a directory itself instead of its contents\n\
+  -R, --recursive recursively list subdirectories";
 
 // Return a string representing the type and permissions of an entry.
 char *entry_type_and_perms(__mode_t mode) {
@@ -78,6 +101,7 @@ void ls_entry(char *entry_name, struct stat entry_status) {
 void ls_dir(char *dir_path) {
   DIR *dir_stream = opendir(dir_path);
 
+  // FIX: figure out how to get the actual, relative paths of the entries to the dir the command was executed in so this doesn't get executed.
   if (dir_stream == NULL) {
     fprintf(stderr, "%s", strerror(errno));
     exit(EXIT_FAILURE);
@@ -101,20 +125,35 @@ void ls_dir(char *dir_path) {
     struct stat entry_status;
 
     lstat(entry_name, &entry_status);
-    ls_entry(entry_name, entry_status);
+
+    if (recursive) {
+      printf("%s:", entry_name);
+      ls_dir(entry_name);
+    } else {
+      ls_entry(entry_name, entry_status);
+    }
   }
 }
 
 int main(int argc, char **argv) {
   int opt;
 
-  while ((opt = getopt_long(argc, argv, "al", long_options, (int *) 0)) != -1) {
+  while ((opt = getopt_long(argc, argv, "aldhR", long_options, (int *) 0)) != -1) {
     switch (opt) {
+      case 'h':
+        printf("%s", help_msg);
+        exit(EXIT_SUCCESS);  
       case 'a':
         all_entries = true;
         break;
       case 'l':
         long_listing = true;
+        break;
+      case 'd':
+        list_directory = true;
+        break;
+      case 'R':
+        recursive = true;
         break;
       default:
         break;
@@ -127,7 +166,7 @@ int main(int argc, char **argv) {
   struct stat target_status;
 
   if (lstat(target_path, &target_status) == 0) {
-    if (S_ISDIR(target_status.st_mode)) {
+    if (S_ISDIR(target_status.st_mode) && !list_directory) {
       ls_dir(target_path);
     } else {
       ls_entry(target_path, target_status);

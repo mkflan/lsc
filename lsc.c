@@ -104,7 +104,7 @@ char *entry_type_and_perms(__mode_t mode) {
 }
 
 // Handle properly displaying a long listing based on command line arguments that were passed.
-void handle_long_listing(char *entry_name, struct stat entry_status) {
+void handle_long_listing(char *entry_path, struct stat entry_status) {
   char *out = "";
 
   if (inodes) {
@@ -147,24 +147,26 @@ void handle_long_listing(char *entry_name, struct stat entry_status) {
 
   char last_modification[64];
   strftime(last_modification, sizeof(last_modification), "%B %d %X", localtime(&entry_status.st_mtime));
-  asprintf(&out, "%s%i %s %s\n", out, entry_status.st_size, last_modification, entry_name);
+  char *entry_name = basename(entry_path);
+  asprintf(&out, "%s%i %s %s", out, entry_status.st_size, last_modification, entry_name);
+
+  if (S_ISLNK(entry_status.st_mode)) {
+    char link_target_name[1024];
+    ssize_t link_target_name_len;
+
+    if ((link_target_name_len = readlink(entry_path, link_target_name, sizeof(link_target_name))) == -1) {
+      fprintf(stderr, "%s", strerror(errno));
+      exit(EXIT_FAILURE);
+    }
+
+    link_target_name[link_target_name_len] = '\0';
+    asprintf(&out, "%s -> %s", out, link_target_name);
+  }
   
   // TODO: figure out how to display the FS blocks a directory takes.
-  printf("%s", out);
-    
-  // Display symlinks properly.
-  // if (S_ISLNK(entry_status.st_mode)) {
-  //   char link_target_name[1024];
-  //   ssize_t link_target_name_len;
+  printf("%s\n", out);
 
-  //   if ((link_target_name_len = readlink(entry_name, link_target_name, sizeof(link_target_name))) == -1) {
-  //     fprintf(stderr, "%s", strerror(errno));
-  //     exit(EXIT_FAILURE);
-  //   } else {
-  //     link_target_name[link_target_name_len] = '\0';
-  //     printf("%s  %s -> %s\n", tp, entry_name, link_target_name);
-  //   }
-  // }  
+  free(out);
 }
 
 // Handle displaying an individual entry.
@@ -175,10 +177,8 @@ void ls_entry(char *entry_path) {
     exit(EXIT_FAILURE);
   }
 
-  char *entry_name = basename(entry_path);
-  
   if (long_listing || no_group || numeric_ids) {
-    handle_long_listing(entry_name, entry_status);
+    handle_long_listing(entry_path, entry_status);
   } else {
     if (inodes) {
       printf("%i ", entry_status.st_ino);
@@ -188,11 +188,14 @@ void ls_entry(char *entry_path) {
       printf("%i ", entry_status.st_blocks / 2);
     }
 
+    char *entry_name = basename(entry_path);
     if (one_per_line) {
       printf("%s\n", entry_name);
     } else {
       printf("%s  ", entry_name);
     }
+
+    free(entry_name);
   }
 }
 
@@ -203,27 +206,43 @@ void ls_dir(char *dir_path) {
     fprintf(stderr, "%s: %s", strerror(errno), dir_path);
     exit(EXIT_FAILURE);
   }
+
+  if (recursive) {
+    printf("%s:\n", dir_path);
+  }
   
   struct dirent *entry;
 
+  char dirs_todo[] = ""; // Used if recursive flag is set.
   while ((entry = readdir(dir_stream)) != NULL) {
     char *entry_name = entry->d_name;
-    if (!strcmp(entry_name, ".") || !strcmp(entry_name, "..")) {
-      continue;
-    }
-      
+    if (!strcmp(entry_name, ".") || !strcmp(entry_name, "..")) continue;
+
     char path[1024];
     snprintf(path, sizeof(path), "%s/%s", dir_path, entry_name);
-
-    // TODO: fully implement recursive ls
+    
     if (entry->d_type == DT_DIR && recursive) {
-      printf("%s:", path);
-      ls_dir(path);
-    } else {
-      ls_entry(path);
+      if (dirs_todo[0] == '\0') {
+        asprintf((char **)dirs_todo, "%s", path);
+      } else {
+        asprintf((char **)dirs_todo, "%s,%s", dirs_todo, path);
+      }
     }
+
+    ls_entry(path);
   }
 
+  if (recursive) {
+    for (char *dir = strtok(dirs_todo, ","); dir != NULL; dir = strtok(NULL, ",")) {
+      ls_dir(dir);
+    }
+    // char *dir;
+    // while ((dir = strsep(&dirs_todo, ",")) != NULL) {
+    //   ls_dir(dir);
+    //   printf("\n\n");
+    // }
+  }
+ 
   closedir(dir_stream);
 }
 
